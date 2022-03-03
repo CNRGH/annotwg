@@ -49,43 +49,36 @@ display_banner
 #... or a data_test dir
 
 #display help
-Annotation_WG.sh -h
+annotwg -h
 
 #ability to reanotate the complete annotation set
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 2
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 2
 #diff <(bcftools annotate --no-version -a "${SCRIPT_TEST_DIR}/examples_annotFile.bcf" -c +CG_rate,+CpG_rate,+GERP_N,+GERP_S,+CADD_RawScore,+CADD_PHRED "${SCRIPT_TEST_DIR}/examples_toAnnotate_full.vcf.gz" | grep -v ^#) <(bcftools view -H --no-version "${SCRIPT_TEST_DIR}/examples_annotFile.bcf")
 
 #no parallel
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf"
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf"
 
 #very parallel
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 10
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 10
 
 #test out file
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 9 -o test_outfile.vcf.gz
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 9 -o test_outfile.vcf.gz
 
 #test relative path
-Annotation_WG.sh -v ../tests/examples_toAnnotate_full.vcf.gz -r ../tests/example.fasta -a ../tests/examples_annotFile.bcf -t 8
+annotwg -v ../tests/examples_toAnnotate_full.vcf.gz -r ../tests/example.fasta -a ../tests/examples_annotFile.bcf -t 8
 
 #custom prefix annotation
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 7 -o test_custom_annot.vcf.gz -p cadd_
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 7 -o test_custom_annot.vcf.gz -p cadd_
 
-#tmp dit in /tmp
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -d /tmp -t 6 -o test_tmp.vcf.gz
+#tmp dir in /tmp
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -d /tmp -t 6 -o test_tmp.vcf.gz
 
 #in memory tmp
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -d /dev/shm -t 5 -o test_shm.vcf.gz
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -d /dev/shm -t 5 -o test_shm.vcf.gz
 
 #ability to annotate InDels
-Annotation_WG.sh -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full-2.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 10 -o test_bigindels.vcf.gz
+annotwg -v "$SCRIPT_TEST_DIR/examples_toAnnotate_full-2.vcf.gz" -r "$SCRIPT_TEST_DIR/example.fasta" -a "$SCRIPT_TEST_DIR/examples_annotFile.bcf" -t 10 -o test_bigindels.vcf.gz
 
-#ability to annotate SNVs mixed with InDels records
-#Annotation_WG.sh toAnnotate_SNVxInDels.vcf.gz example.dict 2
-
-#realworld examples : multiples callers entry NA12878
-#Annotation_WG.sh toAnnotate_NA12878_multicallers.vcf.gz example.dict 2
-
-#popd
 echo -n "Unit testing completed: "
 date
 exit 0

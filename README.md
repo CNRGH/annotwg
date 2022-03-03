@@ -52,6 +52,7 @@ annotwg -v file.vcf.gz -r ref.fasta -a annot.bcf
 ## Licensing
 
 See the [LICENSE](LICENSE) file for licensing information as it pertains to files in this repository.
+
 http://www.cecill.info/index.en.html
 
 ## Installation
