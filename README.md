@@ -76,7 +76,7 @@ cd annotwg
 annotwg -h # to check if the install worked
 ```
 
-### Installation with dependancies using conda
+### Installation with dependencies using conda
 ```sh
 git clone https://gitlab.com/cnrgh/annotwg.git
 cd annotwg
@@ -85,4 +85,3 @@ conda activate annotwg
 ./install.sh --prefix "${CONDA_PREFIX}" # to install in the active conda env. see './install.sh -h' for more details
 annotwg -h # to check if the install worked
 ```
-
