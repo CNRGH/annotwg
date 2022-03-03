@@ -9,7 +9,7 @@ set -Eeo pipefail
 
 
 cleanup(){
-  rm tmpOverlap.bed tmp.bed tmp2.bed
+  rm tmp.bed tmp2.bed
 }
 
 
