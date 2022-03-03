@@ -1,0 +1,13 @@
+# Conda environment for annotwg
+name: annotwg
+channels:
+- bioconda
+- conda-forge
+- defaults
+dependencies:
+- htslib
+- bcftools
+- gawk
+- coreutils
+- grep
+- bash

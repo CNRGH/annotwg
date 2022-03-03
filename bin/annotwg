@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+
+##########################################################
+# ANNOTATION WG                                  2016-2021
+##########################################################
+# Author:                 Florian Sandron <sandron@cng.fr>
+
+## POSSIBLE IMPROVEMENTS
+# - use pegasus for multinode processing (MPI)
+# - debug/verbose option
+
+set -Eeo pipefail
+
+declare TMP_DIR=""
+declare TMP_DIR_PATH=""
+declare VCF=""
+declare REF_INDEX=""
+declare REFERENCE=""
+declare -i THREADS=1
+declare OUT_FILE=""
+declare OUT_BASENAME=""
+declare OUT_DIR=""
+SCRIPT_DIR=$(readlink -f "$(dirname "$0")")
+declare -r SCRIPT_DIR
+declare ANNOTATION=""
+declare ANNOT_PREFIX=""
+declare OUTPUT_FORMAT="z"
+declare OUTPUT_EXTENSION=""
+declare INDEX_OPT=""
+declare INDEX_EXTENTION="csi"
+declare TMP_NORM_BCF=""
+declare -i ID_ANNOT=0
+declare -i INDEXING=0
+declare -i TBI=0
+declare -i COMPR_LEVEL=-1
+declare -i JOIN_ALLELES=0
+
+cleanup(){
+  if [[ -d "${TMP_DIR}" && "${TMP_DIR}" != '' ]]; then
+    rm -fr "${TMP_DIR}"
+  fi
+}
+
+
+trap 'echo [ERROR] Error on $0 line $LINENO with the exit code $? >&2' ERR
+trap cleanup INT TERM EXIT
+
+
+checkCmd(){
+  local cmd
+  cmd="$1"
+  command -v "${cmd}" > /dev/null || { echo "Command ${cmd} not found. Check your installation." >&2 && exit 127 ; }
+}
+
+
+checkEnv(){
+  checkCmd bcftools
+  checkCmd htsfile
+  checkCmd bgzip
+}
+
+
+testArg(){
+    # Test if a string start with a "-" or empty
+    if [[ $2 =~ ^[-] || -z $2 ]]; then 
+        echo "ERROR : Missing Argument for $1" >&2 && display_usage && exit 1
+    else
+        echo "$2" 
+    fi
+}
+
+
+display_usage(){
+  echo "
+USAGE :
+$(basename "$0") [options]
+  -v, --vcf <file.vcf.gz>
+        vcf file bgzipped and indexed with tabix to annotate [Mandatory]
+  -r, --reference <ref.fa>
+        indexed fasta genome reference (.fai or .dict format) [Mandatory]
+  -a, --annot <bcf_annot_file>
+        path to an annotation file (bcf format csi indexed) [Mandatory]
+  -s, --annot-list <list>
+        a comma separated list of INFO features to annotate (all annotations by default)
+  -t, --thread <integer>
+        number of threads used by annotwg (optional) [default:${THREADS}]
+  -d, --tempdir <path/to/tmp> [default: working directory]
+        path to annotWG temporary directory
+  -o, --output <out_file> [default: <input_prefix>.annotated.vcf.gz]
+        output, e.g. annotated VCF file
+  -O, --output-format <b|z>
+        b: compressed BCF, z: compressed VCF [default : ${OUTPUT_FORMAT}]
+  -m, --join-alleles
+        Annotation of splitted alleles can skip variants with bcftools.
+        This flag try to use bcftools norm -m + to join alleles to correct this behavior [optional flag]
+  -I, --indexing
+        perform on the fly csi index generation of the ouput [optional flag]
+  -T, --tbi
+        generate a tbi index instead of csi
+  -p, --annotprefix <prefix>
+        prefix that will be added before every annotation from the annotation file [default ''].
+        example: if '-p annotwg_' the XXX field from the annotation source will be annotated annotwg_XXX.
+  -i, --id
+        Annotate the ID field from the annotation source (optional flag)
+  -l, --compression-level
+        The level of compression (integer from 1 to 9) (optional) [default:${COMPR_LEVEL}]
+  -h, --help
+        print help
+
+DESCRIPTION :
+AnnotWG annotate a WG bgzipped and tabixed VCF file
+
+EXAMPLE :
+$(basename "$0") -v file.vcf.gz -r ref.fasta -a annot.bcf"
+  return 0
+}
+
+
+retrieve_annot(){
+  if [[ $3 != "" ]] ; then
+    local grep_annot
+    grep_annot=$(sed -e 's/,/\n/g' -e 's/^/^/g' -e 's/$/$/g' -e 's/\n/$\\|^/g' <<< "$3")
+    bcftools view -h "$1" | awk -F'=' '$0 ~ /^##INFO/{split($3,a,","); print a[1]}' | grep "${grep_annot}" | sed 's/^\(.*\)/'"$2"'\1:=\1/' | tr '\n' ',' | sed 's/,$//'
+  else
+    bcftools view -h "$1" | awk -F'=' '$0 ~ /^##INFO/{split($3,a,","); print a[1]}' | sed 's/^\(.*\)/'"$2"'\1:=\1/' | tr '\n' ',' | sed 's/,$//'
+  fi
+}
+
+
+# if no arguments, display usage
+if (( $# == 0 )) ; then
+    echo "ERROR : No argument provided" >&2 && display_usage && exit 1
+fi
+
+while (( $# > 0 ))
+do
+    case $1 in
+        -r|--reference) REFERENCE=$(testArg "$1" "$2"); shift;;
+        -v|--vcf) VCF=$(testArg "$1" "$2"); shift;;
+        -o|--output) OUT_FILE=$(testArg "$1" "$2"); shift;;
+        -t|--thread) THREADS=$(testArg "$1" "$2"); shift;;
+        -d|--tempdir) TMP_DIR_PATH=$(testArg "$1" "$2"); shift;;
+        -a|--annot) ANNOTATION=$(testArg "$1" "$2"); shift;;
+        -p|--annotprefix) ANNOT_PREFIX=$(testArg "$1" "$2"); shift;;
+        -s|--annot-list) ANNOT_LIST=$(testArg "$1" "$2"); shift;;
+        -I|--indexing) INDEXING=1; ;;
+        -T|--tbi) TBI=1; ;;
+        -m|--join-alleles) JOIN_ALLELES=1; ;;
+        -O|--output-format) OUTPUT_FORMAT=$(testArg "$1" "$2"); shift;;
+        -i|--id) ID_ANNOT=1; ;;
+        -l|--compression-level) COMPR_LEVEL=$(testArg "$1" "$2"); shift;;
+        -h|--help) checkEnv && display_usage && exit 0 ;;
+        --) shift; break;;
+        -*) echo "$0: error - unrecognized option $1" >&2 && \
+            checkEnv && display_usage && exit 1;;
+        *)  break;;
+    esac
+    shift
+done
+
+#mandatory args
+if [[ -z ${VCF} ]]; then
+    echo '[ERROR] -v|--vcf was not supplied (mandatory option)' >&2 && \
+    display_usage && exit 1
+fi
+if [[ -z ${REFERENCE} ]]; then
+    echo '[ERROR] -r|--reference was not supplied (mandatory option)' >&2 && \
+    display_usage && exit 1
+fi
+if [[ -z ${ANNOTATION} ]]; then
+    echo '[ERROR] -a|--annot was not supplied (mandatory option)' >&2 && \
+    display_usage && exit 1
+fi
+
+#full path
+VCF=$(readlink -f "${VCF}")
+REFERENCE=$(readlink -f "${REFERENCE}")
+ANNOTATION=$(readlink -f "${ANNOTATION}")
+if [[ -n ${TMP_DIR_PATH} ]]; then
+  TMP_DIR_PATH=$(readlink -f "${TMP_DIR_PATH}")
+fi
+if [[ -n ${OUT_FILE} ]]; then
+  OUT_FILE=$(readlink -f "${OUT_FILE}")
+fi
+
+#output name handling
+if [[ -z ${OUT_FILE} ]]; then
+  OUT_DIR=$(dirname "${VCF}")
+  OUT_BASENAME=$(basename "${VCF}" .vcf.gz).annotated
+else
+  OUT_DIR=$(dirname "${OUT_FILE}")
+  OUT_BASENAME=$(basename "$(basename "$(basename "${OUT_FILE}" .vcf.gz)" .vcf)" .bcf)
+fi
+if [[ ${OUTPUT_FORMAT} == "z" ]]; then
+  OUTPUT_EXTENSION="vcf.gz"
+  if [[ ${TBI} == 1 ]]; then
+    INDEX_OPT="-t"
+    INDEX_EXTENTION="tbi"
+  fi
+elif [[ ${OUTPUT_FORMAT} == "b" ]]; then
+  OUTPUT_EXTENSION="bcf"
+  if [[ ${TBI} == 1 ]]; then
+    echo '[ERROR] -T|--tbi is not possible with bcf output (-O b)' >&2 && \
+    display_usage && exit 1
+  fi
+else
+  echo '[ERROR] -O|--output-format can only be "z" or "b"' >&2 && \
+  display_usage && exit 1
+fi
+
+#check installation
+checkEnv
+
+#Detect reference index (fai or dict)
+if [[ -f "${REFERENCE}".fai ]]; then
+  REF_INDEX="${REFERENCE}".fai
+elif [[ -f $(sed 's/.fasta$/.dict/; s/.fa$/.dict/; s/.fna$/.dict/' <(echo "${REFERENCE}")) ]]; then
+  REF_INDEX=$(sed 's/.fasta$/.dict/; s/.fa$/.dict/; s/.fna$/.dict/' <(echo "${REFERENCE}"))
+else
+  echo "Reference index (.fai or .dict) not found for ${REFERENCE}" >&2
+  exit 1
+fi
+
+#Starting date
+date >&2
+
+#make temporary directory and go into
+if [[ -z ${TMP_DIR_PATH} ]]; then
+  TMP_DIR=$(mktemp -d 'tmp_annotwg_XXXXX')
+  TMP_DIR=$(readlink -f "${TMP_DIR}")
+  pushd "${TMP_DIR}" >/dev/null
+else
+  mkdir -p "${TMP_DIR_PATH}"
+  pushd "${TMP_DIR_PATH}" >/dev/null
+  TMP_DIR=${TMP_DIR_PATH}/$(mktemp -d 'tmp_annotwg_XXXXX')
+  popd >/dev/null
+  pushd "${TMP_DIR}" >/dev/null
+fi
+
+# Use htsfile to sniff the precise file type of the given VCF
+VCF_TYPE=$(htsfile "${VCF}" | cut -f2)
+if [[ ${VCF_TYPE} =~ variant\ calling\ text$ ]]; then
+  echo "Warning: your vcf input is not compressed. Performing bgzip compression and index creation." >&2
+  bgzip -c -@ "${THREADS}" "${VCF}" > "$(basename "${VCF}").gz"
+  VCF=$(readlink -f "$(basename "${VCF}").gz")
+  bcftools index -f -t --threads "${THREADS}" "${VCF}"
+elif [[ ${VCF_TYPE} =~ gzip-compressed\ variant\ calling\ data$ ]]; then
+  echo "Warning: your vcf input is not compressed with bgzip. Performing decompression, bgzip compression and index creation." >&2
+  bgzip -@ "${THREADS}" -cd "${VCF}" | bgzip -c -@ "${THREADS}" > "$(basename "${VCF}").gz"
+  VCF=$(readlink -f "$(basename "${VCF}").gz")
+  bcftools index -f -t --threads "${THREADS}" "${VCF}"
+elif [[ ${VCF_TYPE} =~ BGZF-compressed\ variant\ calling\ data$ ]]; then
+  if [[ ! -f "${VCF}.tbi" ]] && [[ ! -f "${VCF}.csi" ]]; then
+    echo "Warning: your vcf input is not tabix indexed. Trying index creation." >&2
+    bcftools index -f -t --threads "${THREADS}" "${VCF}"
+  fi
+elif [[ ${VCF_TYPE} =~ ^BCF\ version\ .+\ compressed\ variant\ calling\ data$ ]]; then
+  if [[ ! -f "${VCF}.csi" ]]; then
+    echo "Warning: your bcf input is not indexed. Trying index creation." >&2
+    bcftools index -f --threads "${THREADS}" "${VCF}"
+  fi
+else
+  echo "Invalid VCF file (predicted file type : \"${VCF_TYPE}\")" >&2
+  exit 1
+fi
+
+#generate split files
+bash "${SCRIPT_DIR}/cutGenome" "${THREADS}" "${REF_INDEX}"
+
+#Parallelize annotation over splits
+pids=()
+for split in $(seq -w 1 "${THREADS}"); do
+  if [[ ${JOIN_ALLELES} == 0 ]]; then
+    if [[ ${ID_ANNOT} == 0 ]]; then
+      { bcftools annotate -O u --no-version -R "${split}".bed -a "${ANNOTATION}" -c "$(retrieve_annot "${ANNOTATION}" "${ANNOT_PREFIX}" "${ANNOT_LIST}")" "${VCF}" | bcftools view -T "${split}".bed --no-version -l "${COMPR_LEVEL}" -O "${OUTPUT_FORMAT}" -o "${OUT_BASENAME}_${split}.${OUTPUT_EXTENSION}" ; } &
+    else
+      { bcftools annotate -O u --no-version -R "${split}".bed -a "${ANNOTATION}" -c ID,"$(retrieve_annot "${ANNOTATION}" "${ANNOT_PREFIX}" "${ANNOT_LIST}")" "${VCF}" | bcftools view -T "${split}".bed --no-version -l "${COMPR_LEVEL}" -O "${OUTPUT_FORMAT}" -o "${OUT_BASENAME}_${split}.${OUTPUT_EXTENSION}" ; } &
+    fi
+  else
+    TMP_NORM_BCF="$(basename "${VCF}")_norm_${split}.bcf"
+    if [[ ${ID_ANNOT} == 0 ]]; then
+      { bcftools norm --no-version -R "${split}".bed -T "${split}".bed -m + -O b -o "${TMP_NORM_BCF}" "${VCF}" && bcftools index "${TMP_NORM_BCF}" && bcftools annotate -O u --no-version -R "${split}".bed -a "${ANNOTATION}" -c "$(retrieve_annot "${ANNOTATION}" "${ANNOT_PREFIX}" "${ANNOT_LIST}")" "${TMP_NORM_BCF}" | bcftools view --no-version -l "${COMPR_LEVEL}" -O "${OUTPUT_FORMAT}" -o "${OUT_BASENAME}_${split}.${OUTPUT_EXTENSION}" ; } &
+    else
+      { bcftools norm --no-version -R "${split}".bed -T "${split}".bed -m + -O b -o "${TMP_NORM_BCF}" "${VCF}" && bcftools index "${TMP_NORM_BCF}" && bcftools annotate -O u --no-version -R "${split}".bed -a "${ANNOTATION}" -c ID,"$(retrieve_annot "${ANNOTATION}" "${ANNOT_PREFIX}" "${ANNOT_LIST}")" "${TMP_NORM_BCF}" | bcftools view --no-version -l "${COMPR_LEVEL}" -O "${OUTPUT_FORMAT}" -o "${OUT_BASENAME}_${split}.${OUTPUT_EXTENSION}" ; } &
+    fi
+  fi
+  pids+=($!)
+done
+
+#wait for every pid for error code handling
+for pid in "${pids[@]}"; do
+  wait "${pid}"
+done
+
+#merge into the final annotated vcf
+mapfile -t split_files < <(ls -v "${OUT_BASENAME}_"*".${OUTPUT_EXTENSION}")
+if [[ ${THREADS} == 1 ]]; then 
+  mv "${OUT_BASENAME}_${split}.${OUTPUT_EXTENSION}" "${OUT_DIR}/${OUT_BASENAME}.${OUTPUT_EXTENSION}"
+  if [[ ${INDEXING} == 1 ]]; then
+    bcftools index ${INDEX_OPT} -f "${OUT_DIR}/${OUT_BASENAME}.${OUTPUT_EXTENSION}"
+  fi
+elif [[ ${INDEXING} == 0 ]]; then
+  bcftools concat -n --no-version -o "${OUT_DIR}/${OUT_BASENAME}.${OUTPUT_EXTENSION}" "${split_files[@]}"
+else
+  bcftools concat -n --no-version "${split_files[@]}" | tee "${OUT_DIR}/${OUT_BASENAME}.${OUTPUT_EXTENSION}" | bcftools index ${INDEX_OPT} -f --threads "${THREADS}" -o "${OUT_DIR}/${OUT_BASENAME}.${OUTPUT_EXTENSION}.${INDEX_EXTENTION}" /dev/stdin
+fi
+
+popd >/dev/null
+date >&2
+exit 0
+

@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+########################################################################
+#   cutGenome: generate bed files from genomeFasta index      31/03/2016
+########################################################################
+# Author:                               Florian Sandron <sandron@cng.fr>
+
+set -Eeo pipefail
+
+
+cleanup(){
+  rm tmpOverlap.bed tmp.bed tmp2.bed
+}
+
+
+err_report() {
+  echo "Error on $0 line $1" >&2
+  exit 1
+}
+
+
+trap 'err_report $LINENO' ERR
+trap cleanup INT TERM EXIT
+
+declare FASTA_DICT=""
+declare FASTA_FAI=""
+declare WHITE_LIST=""
+declare -i K_SIZE=0
+declare -i G_SIZE=0
+declare -i I_SIZE=0
+
+if [[ "$1" == "-h" || -z "$1" || -z "$2" ]]; then
+  echo "Usage: $(basename "$0") numberOfPieces genomeRefFasta.fai.or.dict [WList.txt]"
+  echo "    WList.txt a list of pattern matching chromosomes of interest. One per line."
+  echo ""
+  echo "    cutGenome: generate bed and list files of similar sizes (bases number) from genomeFasta.dict in the current directory."
+  exit 1
+fi
+
+##limitations
+#for big numbers (>100 000) less pieces than asked are produced with the human genome
+#(e.g. 200 000 -> 199 994 intervals; because of +1 applied to interval size but this ensure that we do not produce more intervals)
+#for the same reason the last produced interval is a little smaller than the others
+#Smaller genomes amplified this issues (for 100 bases fasta it brokes at k=14)
+
+#load args
+K_SIZE=$1
+WHITE_LIST=$3
+if [[ ${2: -5} == ".dict" ]] ; then
+  FASTA_DICT=$2
+elif [[ ${2: -4} == ".fai" ]] ; then
+  FASTA_FAI=$2
+else
+  echo "reference index extension is not .dict or .fai"
+  exit 1
+fi
+
+
+#reference bed
+if [[ -n $FASTA_DICT ]]; then 
+  #dict2bed 
+  if [[ -z $WHITE_LIST ]]; then
+    awk -F "\tLN:" '/^@SQ/{split($1,sn,"SN:");split($2,ln,"\t");print sn[2]"\t"0"\t"ln[1]}' "$FASTA_DICT" > tmp.bed
+  else
+    awk -F "\tLN:" '/^@SQ/{split($1,sn,"SN:");split($2,ln,"\t");print sn[2]"\t"0"\t"ln[1]}' "$FASTA_DICT" | grep -f "$WHITE_LIST" > tmp.bed
+  fi
+elif [[ -n $FASTA_FAI ]]; then
+  #fai2bed
+  if [[ -z $WHITE_LIST ]]; then
+    awk -F '\t' '{print $1 FS "0" FS $2}' "$FASTA_FAI" > tmp.bed
+  else
+    awk -F '\t' '{print $1 FS "0" FS $2}' "$FASTA_FAI" | grep -f "$WHITE_LIST" > tmp.bed
+  fi
+else
+  echo "Your reférence genome is not indexed (.fai or .dict)"
+  exit 1
+fi
+
+#args split
+G_SIZE=$(awk -F "\t" '{S+=$3-$2}END{print S}' tmp.bed)
+(( I_SIZE=G_SIZE/K_SIZE+1 ))
+
+#splitBed TODO replace 'a' and 'b' by more explicit varNames (a:step?;b:left?)
+awk -F "\t" -v interval="$I_SIZE" 'BEGIN {
+    a=0;
+    b=interval;
+    tag=1;
+    OFS="\t";
+}{
+    turn=int(($3-(interval-b))/interval);
+    t=turn;
+    if(b!=interval){
+        if(($3-(interval-b))>0){
+            print($1,0,interval-b,tag);
+            tag+=1;
+            if(((2*interval-b)>$3) && (t>0)){
+                turn-=1;
+                t-=1;
+            }
+        }else{
+            print($1,0,$3,tag);
+            b+=$3;
+            test=1;
+            turn=0;
+        }
+    }
+    while(turn>0){
+        print($1,(a)*interval+interval-b,(a+1)*interval+interval-b,tag);
+        tag+=1;
+        turn-=1;
+        a+=1;
+    };
+    if(test==0){
+        print($1,t*interval+interval-b,$3,tag);
+        b=$3-(t*interval+interval-b);
+    }
+    test=0
+    a=0;
+}' tmp.bed > tmp2.bed
+
+#write splitted regions in files
+for i in $(seq -w 1 "$K_SIZE");do
+    grep -P "\t$((10#$i))$" tmp2.bed | awk -F "\t" '{print $1"\t"$2"\t"$3}' > "$i.bed"
+done
+
+exit 0
