@@ -72,7 +72,7 @@ Complete dependency list:
 ```sh
 git clone https://gitlab.com/cnrgh/annotwg.git
 cd annotwg
-./install.sh #to install as root or ./install.sh --prefix /path/to/my/install/ (see './install.sh -h' for more details)
+./install.sh --prefix /usr/local # to install as root (see './install.sh -h' for more details)
 annotwg -h # to check if the install worked
 ```
 
@@ -82,7 +82,7 @@ git clone https://gitlab.com/cnrgh/annotwg.git
 cd annotwg
 conda env create -f annotwgcondaenv.yml
 conda activate annotwg
-./install.sh # or ./install.sh --prefix /path/to/my/install/ (see './install.sh -h' for more details)
+./install.sh --prefix "${CONDA_PREFIX}" # to install in the active conda env. see './install.sh -h' for more details
 annotwg -h # to check if the install worked
 ```
 
